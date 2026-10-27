@@ -1,0 +1,20 @@
+[
+  {
+    "step_id": 1,
+    "title": "Verify Fiber Optic Port Dust Cover",
+    "description": "Ensure transceivers are clean and protective dust caps removed before insertion.",
+    "violation": "Inserting fiber cable with intact dust cap into active QSFP slot."
+  },
+  {
+    "step_id": 2,
+    "title": "Dual Redundant PSU Grounding",
+    "description": "Attach dual-lug ground wire to the rack chassis ground post.",
+    "violation": "Powering server chassis without verified rack grounding."
+  },
+  {
+    "step_id": 3,
+    "title": "Engage Primary 100G Trunk Uplink",
+    "description": "Click latching mechanism on Port 1 until acoustic click is confirmed.",
+    "violation": "Forcing optical connector without aligning keyed notch."
+  }
+]

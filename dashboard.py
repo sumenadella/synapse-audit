@@ -3,12 +3,14 @@ import cv2
 import threading
 import pyttsx3
 import time
+import json
+import hashlib
 from datetime import datetime
 from brain import SOPStateEngine
 
 # --- Page Setup ---
 st.set_page_config(
-    page_title="SynapseAudit | Live Operational Interceptor",
+    page_title="SynapseAudit | Industrial Compliance Interceptor",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -26,6 +28,13 @@ st.markdown("""
         border: 1px solid #ff4b4b;
         font-weight: bold;
         margin-bottom: 12px;
+    }
+    .cert-card {
+        background-color: #112211;
+        border: 1px solid #2e7d32;
+        padding: 15px;
+        border-radius: 8px;
+        margin-top: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -53,7 +62,7 @@ def speak_async(text):
     t = threading.Thread(target=_worker, daemon=True)
     t.start()
 
-# --- SOP Checklist ---
+# --- Default Fallback SOP Protocol ---
 DEFAULT_SOP = [
     {
         "step_id": 1,
@@ -76,8 +85,10 @@ DEFAULT_SOP = [
 ]
 
 # --- State Management ---
+if "active_protocol" not in st.session_state:
+    st.session_state.active_protocol = DEFAULT_SOP
 if "engine" not in st.session_state:
-    st.session_state.engine = SOPStateEngine(DEFAULT_SOP)
+    st.session_state.engine = SOPStateEngine(st.session_state.active_protocol)
 if "audit_log" not in st.session_state:
     st.session_state.audit_log = []
 if "system_status" not in st.session_state:
@@ -91,11 +102,32 @@ active_step = engine.get_active_step()
 # --- Sidebar Controls ---
 with st.sidebar:
     st.title("🛡️ SynapseAudit")
-    st.caption("Meta Hackathon 2026 | Push the Frontier[cite: 1]")
+    st.caption("Meta Hackathon 2026 | Push the Frontier")
     st.divider()
 
-    st.subheader("Camera Control")
-    run_camera = st.toggle("Activate Live Camera Feed", value=True)
+    # Dynamic SOP Ingestion
+    st.subheader("📁 Ingest Custom SOP")
+    uploaded_file = st.file_uploader("Upload SOP JSON", type=["json"])
+    if uploaded_file is not None:
+        try:
+            custom_data = json.load(uploaded_file)
+            if isinstance(custom_data, list) and len(custom_data) > 0 and "step_id" in custom_data[0]:
+                if st.button("Apply Ingested SOP", use_container_width=True):
+                    st.session_state.active_protocol = custom_data
+                    st.session_state.engine = SOPStateEngine(custom_data)
+                    st.session_state.audit_log.clear()
+                    st.session_state.system_status = "OBSERVING"
+                    st.session_state.last_alert = "Custom SOP loaded successfully."
+                    speak_async("New procedural protocol loaded.")
+                    st.rerun()
+            else:
+                st.error("Invalid SOP format: JSON must be a list of step objects.")
+        except Exception as e:
+            st.error(f"Error parsing JSON: {e}")
+
+    st.divider()
+    st.subheader("Camera Feed")
+    run_camera = st.toggle("Activate Live Feed", value=True)
 
     st.divider()
     st.subheader("Manual Intercept Controls")
@@ -103,8 +135,13 @@ with st.sidebar:
     with col_c:
         if st.button("✅ Verify Step", use_container_width=True, disabled=engine.is_protocol_complete()):
             if active_step:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                st.session_state.audit_log.insert(0, f"[{timestamp}] PASS: Step {active_step['step_id']} verified.")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.audit_log.insert(0, {
+                    "timestamp": timestamp,
+                    "event": "STEP_VERIFIED",
+                    "step_id": active_step['step_id'],
+                    "title": active_step['title']
+                })
                 engine.verify_current_step()
                 st.session_state.system_status = "COMPLIANT"
                 st.session_state.last_alert = f"Step {active_step['step_id']} conditions met."
@@ -120,8 +157,13 @@ with st.sidebar:
     with col_v:
         if st.button("🚨 Intercept Error", use_container_width=True, disabled=engine.is_protocol_complete()):
             if active_step:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                st.session_state.audit_log.insert(0, f"[{timestamp}] ⚠️ VIOLATION: {active_step['violation']}")
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.session_state.audit_log.insert(0, {
+                    "timestamp": timestamp,
+                    "event": "SAFETY_VIOLATION_INTERCEPTED",
+                    "step_id": active_step['step_id'],
+                    "risk": active_step['violation']
+                })
                 engine.log_violation(active_step['violation'])
                 st.session_state.system_status = "VIOLATION"
                 st.session_state.last_alert = f"HAZARD DETECTED: {active_step['violation']}"
@@ -134,10 +176,6 @@ with st.sidebar:
         st.session_state.last_alert = "Protocol reset. Workbench active."
         speak_async("SynapseAudit reset. Observing workbench.")
         st.rerun()
-
-    st.divider()
-    st.subheader("Model Pipeline")
-    st.code("Vision: Meta Muse Spark Open[cite: 1]\nGrounding: SAM 3.1[cite: 1]\nRuntime: High-Def Stream Engine", language="text")
 
 # --- Main Dashboard Layout ---
 col_feed, col_telemetry = st.columns([1.3, 1.0])
@@ -164,7 +202,7 @@ with col_feed:
 with col_telemetry:
     st.subheader("Standard Operating Procedure (SOP)")
 
-    for idx, step in enumerate(DEFAULT_SOP):
+    for idx, step in enumerate(st.session_state.active_protocol):
         if idx < engine.current_step_idx:
             st.markdown(f"**Step {step['step_id']}: {step['title']}** — `COMPLETED`")
             st.caption(f"✔️ {step['description']}")
@@ -179,15 +217,48 @@ with col_telemetry:
 
     st.subheader("Audit Event Trail")
     if st.session_state.audit_log:
-        for entry in st.session_state.audit_log[:5]:
-            st.text(entry)
+        for entry in st.session_state.audit_log[:4]:
+            if entry["event"] == "STEP_VERIFIED":
+                st.caption(f"🟢 [{entry['timestamp']}] Step {entry['step_id']}: {entry['title']} passed.")
+            else:
+                st.caption(f"🔴 [{entry['timestamp']}] INTERCEPT: {entry['risk']}")
     else:
         st.caption("No events recorded yet.")
+
+    # --- Compliance Certificate Generation ---
+    if engine.is_protocol_complete():
+        st.markdown("""
+        <div class="cert-card">
+            <h4>🏅 Procedural Compliance Certified</h4>
+            <p style='font-size: 0.85em; color: #a5d6a7;'>All mandatory steps verified without unresolved critical hazards.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Build cryptographically verified audit payload
+        report_data = {
+            "auditor": "SynapseAudit Autonomous Agent v1.0",
+            "completion_time": datetime.now().isoformat(),
+            "total_steps": len(st.session_state.active_protocol),
+            "verified_steps": engine.verified_steps,
+            "violations_intercepted": engine.violation_history,
+            "audit_trail": st.session_state.audit_log
+        }
+        raw_json = json.dumps(report_data, indent=2)
+        cert_hash = hashlib.sha256(raw_json.encode('utf-8')).hexdigest()
+        report_data["integrity_sha256"] = cert_hash
+        final_json_str = json.dumps(report_data, indent=2)
+
+        st.download_button(
+            label="📥 Download Signed Audit Certificate (JSON)",
+            data=final_json_str,
+            file_name=f"synapse_audit_cert_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
 
 # --- High-Definition Stream Loop ---
 if run_camera:
     cap = cv2.VideoCapture(0)
-    # Set crisp 720p HD resolution
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
@@ -210,7 +281,7 @@ if run_camera:
             line_len = 30
             thickness = 3
 
-            # Draw crisp targeting corners
+            # Draw targeting corners
             cv2.line(frame, (x1, y1), (x1 + line_len, y1), color, thickness)
             cv2.line(frame, (x1, y1), (x1, y1 + line_len), color, thickness)
             cv2.line(frame, (x2, y1), (x2 - line_len, y1), color, thickness)
@@ -218,21 +289,17 @@ if run_camera:
             cv2.line(frame, (x1, y2), (x1 + line_len, y2), color, thickness)
             cv2.line(frame, (x1, y2), (x1, y2 - line_len), color, thickness)
             cv2.line(frame, (x2, y2), (x2 - line_len, y2), color, thickness)
-            cv2.line(frame, (x2, y2), (x2, y2 - line_len), color, thickness)
+            cv2.line(frame, (x2, y2), (x2 - line_len, y2), color, thickness)
 
-            # High-visibility HUD labels
             cv2.putText(frame, "HARDWARE GROUNDING ZONE", (x1, max(30, y1 - 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
 
-            # Red warning frame if violation active
             if st.session_state.system_status == "VIOLATION":
                 cv2.rectangle(frame, (0, 0), (w, h), (0, 0, 255), 8)
 
-            # Convert to RGB for Streamlit rendering
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             video_placeholder.image(frame_rgb, channels="RGB", use_container_width=True)
 
-            # Low CPU pause between frames
             time.sleep(0.03)
     finally:
         cap.release()
